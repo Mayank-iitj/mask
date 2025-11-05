@@ -1,12 +1,9 @@
 """Streamlit web app for Face Mask Detection
-
 This app provides a web UI for:
   - Uploading an image to check if a person is wearing a mask
   - (Optional) Live webcam detection if run locally
 """
-
 from __future__ import annotations
-
 import os
 import sys
 import tempfile
@@ -58,7 +55,6 @@ MODEL_PATH = os.environ.get("MODEL_PATH", "mymodel.h5")
 THRESHOLD = float(os.environ.get("THRESHOLD", "0.5"))
 
 st.set_page_config(page_title="Face Mask Detector", page_icon="😷", layout="centered")
-
 st.title("😷 Face Mask Detector")
 st.markdown(
     """
@@ -67,13 +63,11 @@ st.markdown(
     """
 )
 
-
 @st.cache_resource
 def load_trained_model(model_path: str):
     """Load the trained Keras model once and cache it."""
     if not os.path.isfile(model_path):
-        st.error(f"❌ Model file not found: {model_path}")
-        st.info("Please ensure 'mymodel.h5' is in the repository root or set MODEL_PATH environment variable.")
+        st.error("Model file 'mymodel.h5' not found. Please upload the trained model to the repository or train one using facemask.py.")
         st.stop()
     try:
         model = load_model(model_path)
@@ -82,14 +76,12 @@ def load_trained_model(model_path: str):
         st.error(f"❌ Error loading model: {str(e)}")
         st.stop()
 
-
 def preprocess_image(img: Image.Image) -> np.ndarray:
     """Resize and normalize image for model input."""
     img = img.resize((150, 150))
     arr = img_to_array(img)
     arr = np.expand_dims(arr.astype("float32") / 255.0, axis=0)
     return arr
-
 
 def predict_mask(model, img: Image.Image) -> tuple[float, str]:
     """Run inference and return probability and label."""
@@ -101,7 +93,6 @@ def predict_mask(model, img: Image.Image) -> tuple[float, str]:
     except Exception as e:
         st.error(f"❌ Prediction error: {str(e)}")
         raise
-
 
 # Load model with error handling
 try:
@@ -120,11 +111,11 @@ if uploaded_file is not None:
         # Display the uploaded image
         image = Image.open(uploaded_file).convert("RGB")
         st.image(image, caption="Uploaded Image", use_container_width=True)
-
+        
         # Run prediction
         with st.spinner("Analyzing..."):
             prob, label = predict_mask(model, image)
-
+        
         # Display result
         st.subheader("Prediction Result")
         col1, col2 = st.columns(2)
@@ -132,7 +123,7 @@ if uploaded_file is not None:
             st.metric("Label", label)
         with col2:
             st.metric("Probability (no-mask)", f"{prob:.4f}")
-
+        
         if prob > THRESHOLD:
             st.error("⚠️ No mask detected!")
         else:
