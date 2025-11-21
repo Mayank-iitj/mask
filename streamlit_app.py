@@ -1,142 +1,119 @@
-"""Streamlit web app for Face Mask Detection
-This app provides a web UI for:
-  - Uploading an image to check if a person is wearing a mask
-  - (Optional) Live webcam detection if run locally
-"""
-from __future__ import annotations
-import os
-import sys
-import tempfile
-from io import BytesIO
+import io
+import logging
+import streamlit as st
 
-# Core imports with error handling
-try:
-    import streamlit as st
-except ImportError as e:
-    print(f"Error: streamlit not installed. Run: pip install streamlit")
-    sys.exit(1)
+from config.settings import config
+from services.riot_api import RiotAPIClient, RiotAPIError
+from services.insights_engine import InsightsEngine
+from services.visualizations import visualization_generator
 
-try:
-    import numpy as np
-except ImportError as e:
-    st.error("NumPy not installed. Please add 'numpy' to requirements.txt")
-    sys.exit(1)
+st.set_page_config(page_title="LoL Analytics Agent", page_icon="🎮", layout="wide")
+logger = logging.getLogger(__name__)
 
-try:
-    from PIL import Image
-except ImportError as e:
-    st.error("Pillow not installed. Please add 'pillow' to requirements.txt")
-    sys.exit(1)
+st.title("🎮 LoL Analytics Agent")
+st.caption("AI-Powered player insights using Riot API and AWS Bedrock")
 
-# Conditional imports for model inference
-try:
-    from tensorflow.keras.models import load_model
-    from tensorflow.keras.preprocessing.image import img_to_array
-    KERAS_BACKEND = "tensorflow"
-except ImportError:
-    try:
-        from keras.models import load_model
-        from keras.preprocessing.image import img_to_array
-        KERAS_BACKEND = "keras"
-    except ImportError as e:
-        st.error("⚠️ TensorFlow/Keras not installed. Please add 'tensorflow>=2.10.0' to requirements.txt")
+with st.sidebar:
+    st.header("Settings")
+    region = st.selectbox("Riot Region", ["americas", "europe", "asia", "sea"], index=["americas","europe","asia","sea"].index(config.RIOT_API_REGION))
+    platform = st.text_input("Platform (e.g., na1, euw1)", value=config.RIOT_API_PLATFORM)
+    max_matches = st.slider("Max Matches", min_value=10, max_value=200, value=min(100, config.MATCH_HISTORY_LIMIT), step=10)
+    days_back = st.slider("Days Back", min_value=30, max_value=365, value=config.ANALYSIS_LOOKBACK_DAYS, step=15)
+    st.markdown("---")
+    st.markdown("Backend features:")
+    st.checkbox("Bedrock enabled", value=config.ENABLE_BEDROCK, disabled=True)
+
+st.subheader("Enter your Riot ID")
+col1, col2, col3 = st.columns([4,2,2])
+with col1:
+    game_name = st.text_input("Game Name", placeholder="PlayerName")
+with col2:
+    tag_line = st.text_input("Tag Line", placeholder="NA1")
+with col3:
+    run_btn = st.button("Generate Insights", type="primary")
+
+if run_btn:
+    if not game_name or not tag_line:
+        st.error("Please enter both Game Name and Tag Line")
         st.stop()
 
-# OpenCV import with fallback
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-    st.warning("⚠️ OpenCV not available. Some features may be limited. Install 'opencv-python-headless' if needed.")
-
-# Configuration
-MODEL_PATH = os.environ.get("MODEL_PATH", "mymodel.h5")
-THRESHOLD = float(os.environ.get("THRESHOLD", "0.5"))
-
-st.set_page_config(page_title="Face Mask Detector", page_icon="😷", layout="centered")
-st.title("😷 Face Mask Detector")
-st.markdown(
-    """
-    Upload an image to check if a person is wearing a face mask.
-    The model outputs a probability (> 0.5 = NO MASK, ≤ 0.5 = MASK).
-    """
-)
-
-@st.cache_resource
-def load_trained_model(model_path: str):
-    """Load the trained Keras model once and cache it."""
-    if not os.path.isfile(model_path):
-        st.error("Model file 'mymodel.h5' not found. Please upload the trained model to the repository or train one using facemask.py.")
-        st.stop()
     try:
-        model = load_model(model_path)
-        return model
-    except Exception as e:
-        st.error(f"❌ Error loading model: {str(e)}")
-        st.stop()
+        client = RiotAPIClient(region=region, platform=platform)
+        acct = client.get_summoner_by_riot_id(game_name, tag_line)
+        puuid = acct.get("puuid")
+        if not puuid:
+            st.error("Failed to resolve player PUUID")
+            st.stop()
 
-def preprocess_image(img: Image.Image) -> np.ndarray:
-    """Resize and normalize image for model input."""
-    img = img.resize((150, 150))
-    arr = img_to_array(img)
-    arr = np.expand_dims(arr.astype("float32") / 255.0, axis=0)
-    return arr
+        with st.spinner("Fetching match history and generating insights..."):
+            matches = client.get_full_match_history(puuid, max_matches=max_matches, days_back=days_back)
+            if not matches:
+                st.warning("No match history found.")
+                st.stop()
+            engine = InsightsEngine()
+            insights = engine.generate_comprehensive_insights(matches, puuid, f"{game_name}#{tag_line}")
 
-def predict_mask(model, img: Image.Image) -> tuple[float, str]:
-    """Run inference and return probability and label."""
-    try:
-        arr = preprocess_image(img)
-        prob = float(model.predict(arr, verbose=0)[0][0])
-        label = "NO MASK" if prob > THRESHOLD else "MASK"
-        return prob, label
-    except Exception as e:
-        st.error(f"❌ Prediction error: {str(e)}")
-        raise
+        st.success("Insights generated!")
 
-# Load model with error handling
-try:
-    model = load_trained_model(MODEL_PATH)
-    st.sidebar.success(f"✅ Model loaded successfully")
-    st.sidebar.info(f"Backend: {KERAS_BACKEND}")
-except Exception as e:
-    st.error(f"Failed to initialize app: {str(e)}")
-    st.stop()
+        # Overview metrics
+        stats = insights.get("overall_stats", {})
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Win Rate", f"{stats.get('win_rate',0)}%", f"{stats.get('wins',0)}W/{stats.get('losses',0)}L")
+        c2.metric("Avg KDA", f"{stats.get('avg_kda',0)}", f"{stats.get('avg_kills',0)}/{stats.get('avg_deaths',0)}/{stats.get('avg_assists',0)}")
+        c3.metric("Games", f"{stats.get('total_games',0)}", f"{stats.get('total_time_played_hours',0)}h")
+        c4.metric("Avg Damage", f"{stats.get('avg_damage_dealt',0)}", f"Max {stats.get('max_damage_dealt',0)}")
 
-# File uploader
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+        # Strengths and weaknesses
+        st.subheader("Strengths & Areas to Improve")
+        s1,s2 = st.columns(2)
+        with s1:
+            strengths = insights.get("strengths", {})
+            if strengths:
+                for v in strengths.values():
+                    st.success(f"{v.get('metric')}: {v.get('value')}\n\n{v.get('description')}")
+            else:
+                st.info("Keep playing to identify your strengths!")
+        with s2:
+            weaknesses = insights.get("weaknesses", {})
+            if weaknesses:
+                for v in weaknesses.values():
+                    st.warning(f"{v.get('metric')}: {v.get('value')}\n\nTip: {v.get('suggestion')}")
+            else:
+                st.info("No major weaknesses identified! Keep it up!")
 
-if uploaded_file is not None:
-    try:
-        # Display the uploaded image
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Uploaded Image", use_container_width=True)
-        
-        # Run prediction
-        with st.spinner("Analyzing..."):
-            prob, label = predict_mask(model, image)
-        
-        # Display result
-        st.subheader("Prediction Result")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Label", label)
-        with col2:
-            st.metric("Probability (no-mask)", f"{prob:.4f}")
-        
-        if prob > THRESHOLD:
-            st.error("⚠️ No mask detected!")
+        # Coaching tips
+        st.subheader("Coaching Tips")
+        tips = insights.get("coaching_tips", [])
+        if tips:
+            for t in tips:
+                st.write(f"- {t}")
         else:
-            st.success("✅ Mask detected!")
-    
-    except Exception as e:
-        st.error(f"❌ Error processing image: {str(e)}")
-        st.exception(e)
+            st.write("No specific tips at this time.")
 
-st.markdown("---")
-st.markdown(
-    """
-    **Note:** This model was trained on a simple CNN and is for demonstration purposes.
-    For production use, consider using a more robust model and additional validation.
-    """
-)
+        # Achievements
+        st.subheader("Achievements")
+        ach = insights.get("achievements", [])
+        if ach:
+            st.write(" ".join([(a.get('icon') or '⭐') + ' ' + a.get('title','') for a in ach]))
+        else:
+            st.write("Keep playing to unlock achievements!")
+
+        # Year-end report button
+        st.markdown("---")
+        if st.button("Generate Year-End Report"):
+            with st.spinner("Generating year-end report..."):
+                report = InsightsEngine().generate_year_end_report(matches, puuid, f"{game_name}#{tag_line}")
+            st.json(report)
+
+        # Social card
+        st.markdown("---")
+        st.subheader("Social Media Card")
+        img_bytes = visualization_generator.create_social_media_card(insights)
+        st.image(img_bytes, caption="Shareable Stat Card", use_column_width=True)
+        st.download_button("Download Card", data=io.BytesIO(img_bytes), file_name=f"lol-stats-{game_name}-{tag_line}.jpg", mime="image/jpeg")
+
+    except RiotAPIError as e:
+        st.error(f"Riot API error: {e}")
+    except Exception as e:
+        logger.exception("Unexpected error")
+        st.error("An unexpected error occurred while generating insights.")
