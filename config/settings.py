@@ -1,14 +1,9 @@
-"""Settings module that re-exports config from mask_config."""
-from mask_config import *
+"""Settings module that provides access to mask_config."""
+import mask_config
 
-# Create a config object for backward compatibility
+# Create a simple config object that wraps mask_config
 class Config:
-    pass
+    def __getattr__(self, name):
+        return getattr(mask_config, name)
 
 config = Config()
-
-# Copy all attributes from mask_config to config object
-import mask_config as mc
-for attr in dir(mc):
-    if not attr.startswith('_'):
-        setattr(config, attr, getattr(mc, attr))
