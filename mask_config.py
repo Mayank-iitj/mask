@@ -23,3 +23,16 @@ NUM_CLASSES = len(CLASSES)
 
 # Detection Configuration
 MIN_CONFIDENCE = 0.5
+
+# Riot API Configuration
+RIOT_RATE_LIMIT_PER_SECOND = 20
+RIOT_RATE_LIMIT_PER_TWO_MINUTES = 100
+RIOT_API_PLATFORM = 'na1'
+
+# Match History Configuration
+MATCH_HISTORY_LIMIT = 10
+ANALYSIS_LOOKBACK_DAYS = 30
+
+# Analytics Configuration
+ENABLE_BEDROCK = False
+
