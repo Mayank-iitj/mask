@@ -10,3 +10,6 @@ seaborn
 
 imutils
 ratelimit
+boto3
+requests
+
